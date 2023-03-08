@@ -57,7 +57,7 @@ class ApplyConcatApply(Expr):
             combine_kwargs = aggregate_kwargs
 
         d = {}
-        keys = self.frame.__dask_keys__()
+        keys = self.operand("frame").__dask_keys__()
 
         # apply chunk to every input partition
         for i, key in enumerate(keys):
@@ -91,7 +91,7 @@ class ApplyConcatApply(Expr):
 
     @property
     def _meta(self):
-        meta = self.frame._meta
+        meta = self.operand("frame")._meta
         meta = self.chunk(meta, **self.chunk_kwargs)
         meta = self.combine([meta], **self.combine_kwargs)
         meta = self.aggregate([meta], **self.aggregate_kwargs)
@@ -154,11 +154,11 @@ class Reduction(ApplyConcatApply):
         return [None, None]
 
     def __str__(self):
-        params = {param: getattr(self, param) for param in self._parameters[1:]}
+        params = {param: self.operand(param) for param in self._parameters[1:]}
         s = ", ".join(
             k + "=" + repr(v) for k, v in params.items() if v != self._defaults.get(k)
         )
-        base = str(self.frame)
+        base = str(self.operand("frame"))
         if " " in base:
             base = "(" + base + ")"
         return f"{base}.{self.__class__.__name__.lower()}({s})"
@@ -171,15 +171,15 @@ class Sum(Reduction):
     @property
     def chunk_kwargs(self):
         return dict(
-            skipna=self.skipna,
-            level=self.level,
-            numeric_only=self.numeric_only,
-            min_count=self.min_count,
+            skipna=self.operand("skipna"),
+            level=self.operand("level"),
+            numeric_only=self.operand("numeric_only"),
+            min_count=self.operand("min_count"),
         )
 
     @property
     def _meta(self):
-        return self.frame._meta.sum(**self.chunk_kwargs)
+        return self.operand("frame")._meta.sum(**self.chunk_kwargs)
 
     @classmethod
     def _replacement_rules(cls):
@@ -197,12 +197,12 @@ class Max(Reduction):
     @property
     def chunk_kwargs(self):
         return dict(
-            skipna=self.skipna,
+            skipna=self.operand("skipna"),
         )
 
     @property
     def _meta(self):
-        return self.frame._meta.max(**self.chunk_kwargs)
+        return self.operand("frame")._meta.max(**self.chunk_kwargs)
 
     @classmethod
     def _replacement_rules(cls):
@@ -264,8 +264,8 @@ class Mode(ApplyConcatApply):
 
     @property
     def chunk_kwargs(self):
-        return {"dropna": self.dropna}
+        return {"dropna": self.operand("dropna")}
 
     @property
     def aggregate_kwargs(self):
-        return {"dropna": self.dropna}
+        return {"dropna": self.operand("dropna")}

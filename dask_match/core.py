@@ -100,9 +100,6 @@ class Expr(Operation, DaskMethodsMixin, metaclass=_ExprMeta):
     def __getattr__(self, key):
         if key == "__name__":
             return object.__getattribute__(self, key)
-        elif key in type(self)._parameters:
-            idx = type(self)._parameters.index(key)
-            return self.operands[idx]
         elif key in dir(type(self)):
             return object.__getattribute__(self, key)
         elif is_dataframe_like(self._meta) and key in self._meta.columns:
@@ -110,12 +107,15 @@ class Expr(Operation, DaskMethodsMixin, metaclass=_ExprMeta):
         else:
             return object.__getattribute__(self, key)
 
+    def operand(self, key):
+        return self.operands[type(self)._parameters.index(key)]
+
+    @property
+    def index(self):
+        return Index(self)
+
     def __setattr__(self, key, value):
-        if key in type(self)._parameters:
-            idx = type(self)._parameters.index(key)
-            self.operands[idx] = value
-        else:
-            object.__setattr__(self, key, value)
+        object.__setattr__(self, key, value)
 
     def __getitem__(self, other):
         if isinstance(other, Expr):
@@ -370,15 +370,15 @@ class Apply(Elemwise):
 
     @property
     def _meta(self):
-        return self.frame._meta.apply(self.function, *self.args, **self.kwargs)
+        return self.operand("frame")._meta.apply(self.operand("function"), *self.operand("args"), **self.operand("kwargs"))
 
     def _layer(self):
         return {
             (self._name, i): (
                 apply,
                 M.apply,
-                [(self.frame._name, i), self.function] + list(self.args),
-                self.kwargs,
+                [(self.operand("frame")._name, i), self.operand("function")] + list(self.operand("args")),
+                self.operand("kwargs"),
             )
             for i in range(self.npartitions)
         }
@@ -409,23 +409,43 @@ class Projection(Elemwise):
     operation = operator.getitem
 
     def _divisions(self):
-        return self.frame.divisions
+        return self.operand("frame").divisions
 
     @property
     def _meta(self):
-        return self.frame._meta[self.columns]
+        return self.operand("frame")._meta[self.columns]
 
     def _layer(self):
         return {
-            (self._name, i): (operator.getitem, (self.frame._name, i), self.columns)
+            (self._name, i): (operator.getitem, (self.operand("frame")._name, i), self.columns)
             for i in range(self.npartitions)
         }
 
     def __str__(self):
-        base = str(self.frame)
+        base = str(self.operand("frame"))
         if " " in base:
             base = "(" + base + ")"
         return f"{base}[{repr(self.columns)}]"
+
+
+class Index(Elemwise):
+    """Column Selection"""
+
+    _parameters = ["frame"]
+    operation = getattr
+
+    def _divisions(self):
+        return self.operand("frame").divisions
+
+    @property
+    def _meta(self):
+        return self.operand("frame")._meta.index
+
+    def _layer(self):
+        return {
+            (self._name, i): (getattr, (self.operand("frame")._name, i), "index")
+            for i in range(self.npartitions)
+        }
 
 
 class Binop(Elemwise):
@@ -436,14 +456,14 @@ class Binop(Elemwise):
         return {
             (self._name, i): (
                 self.operation,
-                (self.left._name, i) if isinstance(self.left, Expr) else self.left,
-                (self.right._name, i) if isinstance(self.right, Expr) else self.right,
+                (self.operand("left")._name, i) if isinstance(self.operand("left"), Expr) else self.operand("left"),
+                (self.operand("right")._name, i) if isinstance(self.operand("right"), Expr) else self.operand("right"),
             )
             for i in range(self.npartitions)
         }
 
     def __str__(self):
-        return f"{self.left} {self._operator_repr} {self.right}"
+        return f"{self.operand('left')} {self._operator_repr} {self.operand('right')}"
 
     @classmethod
     def _replacement_rules(cls):
@@ -560,16 +580,16 @@ class from_pandas(IO):
 
     @property
     def _meta(self):
-        return self.frame.head(0)
+        return self.operand("frame").head(0)
 
     def _divisions(self):
         return [None] * (self.npartitions + 1)
 
     def _layer(self):
-        chunksize = int(math.ceil(len(self.frame) / self.npartitions))
-        locations = list(range(0, len(self.frame), chunksize)) + [len(self.frame)]
+        chunksize = int(math.ceil(len(self.operand("frame")) / self.npartitions))
+        locations = list(range(0, len(self.operand("frame")), chunksize)) + [len(self.operand("frame"))]
         return {
-            (self._name, i): self.frame.iloc[start:stop]
+            (self._name, i): self.operand("frame").iloc[start:stop]
             for i, (start, stop) in enumerate(zip(locations[:-1], locations[1:]))
         }
 
@@ -589,7 +609,7 @@ class from_graph(IO):
     _parameters = ["layer", "_meta", "divisions", "_name"]
 
     def _layer(self):
-        return self.layer
+        return self.operand("layer")
 
 
 @normalize_token.register(Expr)
